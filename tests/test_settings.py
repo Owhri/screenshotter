@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from screenshotter.errors import UserError
-from screenshotter.settings import Settings, key_file, load_key, load_settings, save_key, save_settings, saved_key
+from screenshotter.settings import Settings, key_file, load_key, load_key_with_source, load_settings, save_key, save_settings, saved_key, validate_key
 
 
 class SettingsTests(unittest.TestCase):
@@ -33,11 +33,27 @@ class SettingsTests(unittest.TestCase):
             with self.subTest(settings=settings), self.assertRaises(UserError):
                 save_settings(settings)
 
-    def test_environment_key_takes_priority_without_reading_credential_store(self):
+    def test_saved_key_wins_over_stale_environment_variable(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "example-key"}), patch(
-            "screenshotter.settings.saved_key", side_effect=AssertionError("must not read")
+            "screenshotter.settings.saved_key", return_value="fresh-saved-test-key"
         ):
-            self.assertEqual(load_key(), "example-key")
+            self.assertEqual(load_key(), "fresh-saved-test-key")
+
+    def test_environment_is_fallback_when_saved_key_is_absent_or_unavailable(self):
+        for failure in (False, True):
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "example-key"}), patch(
+                "screenshotter.settings.saved_key", return_value=None,
+                side_effect=UserError("credential unavailable") if failure else None,
+            ):
+                key, source = load_key_with_source()
+                self.assertEqual(key, "example-key")
+                self.assertEqual(source, "OPENAI_API_KEY environment variable")
+
+    def test_admin_keys_and_copied_assignment_wrappers_are_rejected_locally(self):
+        for key in ("sk-admin-dummy", '"unit-test-key"', "OPENAI_API_KEY=unit-test-key", "Bearer unit-test-key"):
+            with self.subTest(key=key), self.assertRaises(UserError):
+                validate_key(key)
+        self.assertEqual(validate_key("\ufeffunit-test-key\n"), "unit-test-key")
 
     def test_credential_write_uses_text_and_read_decodes_windows_bytes(self):
         store = {}

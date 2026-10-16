@@ -17,7 +17,7 @@ animations or prevent other applications from changing their own contents.
 This version uses the **OpenAI API**, not the ChatGPT desktop app. Requests do
 not appear in your ChatGPT history. No ChatGPT subscription is required; API
 billing is separate. The program does not include an API key or spend money until
-you configure a key and trigger a screenshot.
+you configure a key and trigger a screenshot or explicitly run the model test.
 
 ## Install and run
 
@@ -28,13 +28,21 @@ you configure a key and trigger a screenshot.
    installation folders. No administrator access is needed to run Screenshotter.
 2. Double-click **Setup.cmd**. It creates a local `.venv` and installs the app
    and its dependencies. Installation requires Internet access to PyPI.
-3. Create an API key in your [OpenAI API account](https://platform.openai.com/api-keys)
+3. Create a regular **project API key** in your [OpenAI API account](https://platform.openai.com/api-keys)
    and enable billing if necessary. Double-click **Configure.cmd** and paste
    the key into its masked field. Never put the key in the repository or chat.
    The app first tries **Windows Credential Manager** under `Screenshotter/OpenAI`.
    If that fails, it saves the key as plaintext in
    `%LOCALAPPDATA%\Screenshotter\api_key.txt`, as authorized for this app.
    The success message identifies text-file storage when used.
+   Organization admin keys are for administration and cannot be used here.
+   **Test key (no generation)** checks authentication and lists models without
+   sending screenshots. **Test model (uses API)** explicitly generates a tiny
+   test answer with a generated white pixel to check image and effort support;
+   it incurs normal API usage, using the selected token budget. Neither test
+   captures your desktop. Tests use the key currently typed in the field, or
+   the selected saved/environment key if the field is blank. Save after a
+   successful test to store the typed key.
 4. Double-click **Start.cmd**. A small camera icon appears in the system tray
    (possibly under Windows' hidden-icons arrow). You can close the settings
    window and leave Chrome in front. Open the tray menu to see readiness or
@@ -99,11 +107,15 @@ selected model; `off` omits the reasoning parameter and uses model defaults
 GPT-5/6 and o-series reasoning models and omits it for non-reasoning models
 such as `gpt-4.1-mini`. Instant also omits it for GPT-4 and GPT-3.5 models,
 which do not support reasoning-effort controls.
-Quit and restart the app after saving changes. Non-secret settings are in
+Quit and restart the app after changing model settings. API keys are reread
+for every request, so replacing a saved key no longer requires a restart.
+Non-secret settings are in
 `%LOCALAPPDATA%\Screenshotter\settings.json`. The exact legacy defaults
 (`gpt-4.1-mini`, 600 tokens, 60 seconds) migrate to the new defaults in 0.1.3;
-customized settings are preserved. The optional `OPENAI_API_KEY` environment
-variable overrides saved keys, followed by the text file, then Credential Manager.
+customized settings are preserved. A saved text-file key takes priority, followed
+by Credential Manager. `OPENAI_API_KEY` is used only if no saved key is available.
+This prevents an old environment variable from overriding the key you enter in
+Configure.cmd. Test results identify the key source without displaying its value.
 
 Speech uses an installed Windows SAPI voice and Windows' default audio device.
 Check Windows sound settings if muted or routed to headphones. It uses no paid
@@ -139,6 +151,20 @@ token limit includes reasoning; it is not a dollar spending cap.
   model access, and connection failures. Logs in
   `%LOCALAPPDATA%\Screenshotter\app.log` contain timestamps and exception types,
   not screenshots, answers, keys, or raw API error bodies.
+- **HTTP 401** means authentication failed. Test a regular project key in
+  Configure.cmd; admin keys, revoked keys, and incomplete copies cannot work.
+  Version 0.1.4 makes saved keys override stale environment variables and rereads
+  them for every request. The metadata check needs Models read permission; actual
+  requests also need Responses write permission. Model visibility does not prove
+  inference permission or image/effort compatibility.
+- **HTTP 400** means the request was rejected. Where the API supplies a known
+  parameter, the app names it safely. For `reasoning.effort`, Instant's `none`
+  value may be unsupported: choose a model supporting it or select a supported
+  effort such as Low. Off omits the effort setting and uses the model's own
+  defaults; it does not promise no reasoning. The app keeps your preference and
+  does not silently downgrade models or change effort. Use **Test model** to
+  reproduce this without capturing your screen. Share only the error text,
+  never the key.
 - If Configure.cmd reports that Windows cannot save credentials, update to
   version 0.1.2 or later and rerun Setup.cmd. Earlier versions passed bytes to
   a Windows credential function that requires text. New versions distinguish

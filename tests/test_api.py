@@ -1,9 +1,11 @@
 import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import io
 import threading
 import unittest
 from unittest.mock import patch
+from PIL import Image
 
 from screenshotter import PROMPT
 from screenshotter.api import OpenAIChat
@@ -31,8 +33,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.server.get_requests.append(self.path)
-        self.send_response(500)
+        self.server.get_authorizations.append(self.headers.get("Authorization"))
+        self.send_response(self.server.status)
         self.end_headers()
+        self.wfile.write(self.server.body)
 
     def log_message(self, *_):
         pass
@@ -57,6 +61,7 @@ class APITests(unittest.TestCase):
         self.server.extra_headers = {}
         self.server.requests = []
         self.server.get_requests = []
+        self.server.get_authorizations = []
         # Production always uses HTTPS api.openai.com. Only tests redirect it.
         self.endpoint_patch = patch("screenshotter.api.ENDPOINT", f"http://127.0.0.1:{self.server.server_port}/v1/responses")
         self.endpoint_patch.start()
@@ -106,6 +111,48 @@ class APITests(unittest.TestCase):
         client = OpenAIChat("unit-test-key", reasoning_effort="auto")
         client.answer(PNG, PROMPT)
         self.assertEqual(self.server.requests[0][2]["reasoning"], {"effort": "high"})
+
+    def test_key_check_reads_model_metadata_without_generating_or_sending_images(self):
+        self.server.body = b'{"data":[{"id":"gpt-6-astra"},{"id":"gpt-4.1-mini"}]}'
+        self.assertEqual(self.client.list_models(), ["gpt-4.1-mini", "gpt-6-astra"])
+        self.assertEqual(self.server.get_requests, ["/v1/models"])
+        self.assertEqual(self.server.requests, [])
+
+    def test_key_provider_is_reloaded_for_every_request(self):
+        selected = ["new-key-one"]
+        client = OpenAIChat("stale-in-memory-test-key", key_provider=lambda: selected[0])
+        self.server.body = b'{"data":[]}'
+        client.list_models()
+        self.assertEqual(self.server.get_authorizations, ["Bearer new-key-one"])
+        selected[0] = "new-key-two"
+        self.server.body = json.dumps(completed()).encode()
+        client.answer(PNG, PROMPT)
+        self.assertEqual(self.server.requests[0][1], "Bearer new-key-two")
+
+    def test_model_probe_uses_only_a_generated_pixel_and_fixed_test_prompt(self):
+        self.client.probe_model()
+        content = self.server.requests[0][2]["input"][0]["content"]
+        self.assertEqual(content[0]["text"], "Reply with only OK.")
+        pixel = base64.b64decode(content[1]["image_url"].split(",", 1)[1])
+        with Image.open(io.BytesIO(pixel)) as image:
+            self.assertEqual(image.size, (1, 1))
+            image.verify()
+
+    def test_rejected_reasoning_value_is_distinguished_without_echoing_raw_message(self):
+        self.server.status = 400
+        self.server.body = json.dumps({"error": {"code": "unsupported_value", "param": "reasoning.effort",
+                                                "message": "private-server-detail"}}).encode()
+        with self.assertRaisesRegex(UserError, "HTTP 400.*reasoning.effort.*Instant") as error:
+            self.client.answer(PNG, PROMPT)
+        self.assertNotIn("private-server-detail", str(error.exception))
+
+    def test_invalid_key_error_code_is_reported_without_raw_body(self):
+        self.server.status = 401
+        self.server.body = json.dumps({"error": {"code": "invalid_api_key",
+                                                "message": "unit-test-not-a-real-key"}}).encode()
+        with self.assertRaisesRegex(UserError, "HTTP 401.*Configure.cmd") as error:
+            self.client.list_models()
+        self.assertNotIn("unit-test-not-a-real-key", str(error.exception))
 
     def test_rate_limit_is_actionable_and_never_retried(self):
         self.server.status = 429

@@ -58,7 +58,7 @@ def main() -> None:
         try:
             settings = load_settings()
             chat = OpenAIChat(load_key(), settings.model, settings.max_output_tokens,
-                              settings.timeout_seconds, settings.reasoning_effort)
+                              settings.timeout_seconds, settings.reasoning_effort, key_provider=load_key)
         except UserError as exc:
             user32.MessageBoxW(None, str(exc), "Screenshotter — setup needed", 0x40)
             return

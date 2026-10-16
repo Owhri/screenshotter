@@ -106,18 +106,41 @@ def _credential_key() -> str | None:
         raise UserError("The saved API key is unreadable. Re-enter it in Configure.cmd.") from None
 
 
-def load_key() -> str:
-    key = os.environ.get("OPENAI_API_KEY", "").strip() or saved_key()
-    if not key:
-        raise UserError("API key is missing. Run Configure.cmd first.")
+def validate_key(key: str) -> str:
+    key = key.strip().lstrip("\ufeff").strip()
+    if not key or any(c.isspace() for c in key) or not key.isascii():
+        raise UserError("Paste only the complete API key, without whitespace or a Bearer prefix.")
+    if key.startswith("sk-admin-"):
+        raise UserError("Admin keys cannot be used for model requests. Use a regular project API key.")
+    if key.startswith(("\"", "'", "OPENAI_API_KEY=")):
+        raise UserError("Paste only the API key, without quotes or OPENAI_API_KEY=.")
     return key
+
+
+def load_key_with_source() -> tuple[str, str]:
+    # An explicit app setting must win over an unrelated or stale environment key.
+    env_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    try:
+        stored = saved_key()
+    except UserError:
+        if env_key:
+            return validate_key(env_key), "OPENAI_API_KEY environment variable"
+        raise
+    if stored:
+        source = "local api_key.txt file" if key_file().exists() else "Windows Credential Manager"
+        return validate_key(stored), source
+    if env_key:
+        return validate_key(env_key), "OPENAI_API_KEY environment variable"
+    raise UserError("API key is missing. Run Configure.cmd first.")
+
+
+def load_key() -> str:
+    return load_key_with_source()[0]
 
 
 def save_key(key: str) -> str:
     """Return the storage used, falling back to text if credentials fail."""
-    key = key.strip()
-    if not key or any(c.isspace() for c in key):
-        raise UserError("Enter an API key without whitespace.")
+    key = validate_key(key)
     if not key_file().exists():
         try:
             _save_credential_key(key)
