@@ -107,6 +107,12 @@ token limit bounds answer length; it is not a dollar spending cap.
   model access, and connection failures. Logs in
   `%LOCALAPPDATA%\Screenshotter\app.log` contain timestamps and exception types,
   not screenshots, answers, keys, or raw API error bodies.
+- If Configure.cmd reports that Windows cannot save credentials, update to
+  version 0.1.2 or later and rerun Setup.cmd. Earlier versions passed bytes to
+  a Windows credential function that requires text. New versions distinguish
+  Credential Manager failures from settings-folder write failures and show
+  safe numeric error codes. Saving settings does not contact the API or
+  validate your billing or API key online.
 - An answer exceeding the token limit is not spoken as if complete. Select fewer
   questions or increase the limit in Configure.cmd. API refusals and empty
   responses also produce an error status.

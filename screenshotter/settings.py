@@ -46,11 +46,19 @@ def load_settings() -> Settings:
 
 def save_settings(settings: Settings) -> None:
     settings.validate()
-    directory = settings_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    temporary = directory / "settings.json.tmp"
-    temporary.write_text(json.dumps(asdict(settings), indent=2) + "\n", encoding="utf-8")
-    temporary.replace(directory / "settings.json")
+    try:
+        directory = settings_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = directory / "settings.json.tmp"
+        temporary.write_text(json.dumps(asdict(settings), indent=2) + "\n", encoding="utf-8")
+        temporary.replace(directory / "settings.json")
+    except OSError as exc:
+        code = getattr(exc, "winerror", None) or exc.errno
+        detail = f" (error {code})" if isinstance(code, int) else ""
+        raise UserError(
+            "Could not write settings in %LOCALAPPDATA%\\Screenshotter"
+            f"{detail}. Check that your Windows account can write to that folder."
+        ) from None
 
 
 def saved_key() -> str | None:
@@ -64,7 +72,10 @@ def saved_key() -> str | None:
             return None
         raise UserError("Windows Credential Manager could not read the API key.") from None
     blob = credential["CredentialBlob"]
-    return blob.decode("utf-16-le") if isinstance(blob, bytes) else blob
+    try:
+        return blob.decode("utf-16-le") if isinstance(blob, bytes) else blob
+    except UnicodeDecodeError:
+        raise UserError("The saved API key is unreadable. Re-enter it in Configure.cmd.") from None
 
 
 def load_key() -> str:
@@ -75,15 +86,30 @@ def load_key() -> str:
 
 
 def save_key(key: str) -> None:
-    import win32cred
+    try:
+        import win32cred
+        import pywintypes
+    except ImportError:
+        raise UserError("Windows credential support is missing. Run Setup.cmd again.") from None
 
     key = key.strip()
     if not key or any(c.isspace() for c in key):
         raise UserError("Enter an API key without whitespace.")
-    win32cred.CredWrite({
-        "Type": win32cred.CRED_TYPE_GENERIC,
-        "TargetName": CREDENTIAL_NAME,
-        "UserName": "OpenAI API",
-        "CredentialBlob": key.encode("utf-16-le"),
-        "Persist": win32cred.CRED_PERSIST_LOCAL_MACHINE,
-    }, 0)
+    try:
+        win32cred.CredWrite({
+            "Type": win32cred.CRED_TYPE_GENERIC,
+            "TargetName": CREDENTIAL_NAME,
+            "UserName": "OpenAI API",
+            # pywin32 311 requires str on write and returns UTF-16 bytes on read.
+            "CredentialBlob": key,
+            "Persist": win32cred.CRED_PERSIST_LOCAL_MACHINE,
+        }, 0)
+    except pywintypes.error as exc:
+        code = getattr(exc, "winerror", None)
+        detail = f" (Windows error {code})" if isinstance(code, int) else ""
+        raise UserError(
+            f"Windows Credential Manager could not save the API key{detail}. "
+            "Check credential-storage permissions for your Windows account."
+        ) from None
+    except (TypeError, ValueError):
+        raise UserError("Windows rejected the credential format. Update the app and rerun Setup.cmd.") from None
