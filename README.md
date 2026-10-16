@@ -22,9 +22,10 @@ you configure a key and trigger a screenshot.
 ## Install and run
 
 1. Download or copy this repository onto your Windows 11 computer. Install
-   **64-bit Python 3.12** from [python.org](https://www.python.org/downloads/).
-   Include the Python launcher when installing. No administrator access is needed
-   to run Screenshotter.
+   **64-bit Python 3.12** from [python.org](https://www.python.org/downloads/)
+   is recommended; CPython 3.11 through 3.14 are accepted. The Python launcher
+   is optional. Setup tries the launcher, `python`/`python3`, and standard
+   installation folders. No administrator access is needed to run Screenshotter.
 2. Double-click **Setup.cmd**. It creates a local `.venv` and installs the app
    and its dependencies. Installation requires Internet access to PyPI.
 3. Create an API key in your [OpenAI API account](https://platform.openai.com/api-keys)
@@ -112,9 +113,12 @@ token limit bounds answer length; it is not a dollar spending cap.
 - Protected video, DRM content, secure desktops, and some fullscreen games may
   not be capturable or accept hotkeys. Use the normal Windows desktop. This app
   does not bypass Windows security or content protection.
-- If Setup.cmd cannot find Python, install Python 3.12 with its launcher. If you
-  previously created `.venv` with a different Python version, remove that local
-  virtual environment and run Setup.cmd again. Run the following in a terminal
+- If Setup.cmd cannot find Python, check `python --version` or `py --version`
+  in a new terminal. It needs **64-bit CPython 3.11–3.14**; installing the `py`
+  launcher is not required. For a custom location, open a terminal in the
+  extracted app folder and run `Setup.cmd "D:\YourPython\python.exe"` with the
+  actual path. If you previously created a broken or incompatible `.venv`,
+  remove only this app's `.venv` folder and run Setup.cmd again. Run the following in a terminal
   to see startup errors if a tray icon never appears:
 
   ```bat
