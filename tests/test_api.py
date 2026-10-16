@@ -73,9 +73,10 @@ class APITests(unittest.TestCase):
         path, authorization, payload = self.server.requests[0]
         self.assertEqual(path, "/v1/responses")
         self.assertEqual(authorization, "Bearer unit-test-not-a-real-key")
-        self.assertEqual(payload["model"], "gpt-4.1-mini")
+        self.assertEqual(payload["model"], "gpt-6-astra")
         self.assertIs(payload["store"], False)
-        self.assertEqual(payload["max_output_tokens"], 600)
+        self.assertEqual(payload["max_output_tokens"], 16384)
+        self.assertEqual(payload["reasoning"], {"effort": "none"})
         self.assertEqual(len(payload["input"]), 1)
         content = payload["input"][0]["content"]
         self.assertEqual(content[0], {"type": "input_text", "text": PROMPT})
@@ -83,6 +84,28 @@ class APITests(unittest.TestCase):
         self.assertEqual(prefix, "data:image/png;base64")
         self.assertEqual(base64.b64decode(data), PNG)
         self.assertEqual(content[1]["detail"], "high")
+
+    def test_non_reasoning_model_does_not_receive_unsupported_parameter(self):
+        client = OpenAIChat("unit-test-key", model="gpt-4.1-mini", max_output_tokens=600)
+        client.answer(PNG, PROMPT)
+        payload = self.server.requests[0][2]
+        self.assertNotIn("reasoning", payload)
+        self.assertEqual(payload["max_output_tokens"], 600)
+
+    def test_explicit_effort_or_off_is_respected(self):
+        for effort in ("max", "off"):
+            client = OpenAIChat("unit-test-key", reasoning_effort=effort)
+            client.answer(PNG, PROMPT)
+            payload = self.server.requests[-1][2]
+            if effort == "off":
+                self.assertNotIn("reasoning", payload)
+            else:
+                self.assertEqual(payload["reasoning"], {"effort": effort})
+
+    def test_auto_reasoning_remains_opt_in_for_supported_model_families(self):
+        client = OpenAIChat("unit-test-key", reasoning_effort="auto")
+        client.answer(PNG, PROMPT)
+        self.assertEqual(self.server.requests[0][2]["reasoning"], {"effort": "high"})
 
     def test_rate_limit_is_actionable_and_never_retried(self):
         self.server.status = 429

@@ -1,4 +1,4 @@
-"""Non-secret settings on disk; API keys in Windows Credential Manager."""
+"""Settings, Credential Manager, and the user's authorized local key fallback."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import tempfile
 
 from screenshotter.errors import UserError
 
@@ -19,17 +20,20 @@ def settings_dir() -> Path:
 
 @dataclass(frozen=True)
 class Settings:
-    model: str = "gpt-4.1-mini"
-    max_output_tokens: int = 600
-    timeout_seconds: int = 60
+    model: str = "gpt-6-astra"
+    max_output_tokens: int = 16384
+    timeout_seconds: int = 300
+    reasoning_effort: str = "instant"
 
     def validate(self) -> None:
         if not isinstance(self.model, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", self.model):
             raise UserError("Enter a valid API model name.")
-        if type(self.max_output_tokens) is not int or not 128 <= self.max_output_tokens <= 2000:
-            raise UserError("Answer length must be between 128 and 2000 tokens.")
-        if type(self.timeout_seconds) is not int or not 10 <= self.timeout_seconds <= 180:
-            raise UserError("Request timeout must be between 10 and 180 seconds.")
+        if type(self.max_output_tokens) is not int or not 128 <= self.max_output_tokens <= 32768:
+            raise UserError("Token budget must be between 128 and 32768 tokens, including reasoning.")
+        if type(self.timeout_seconds) is not int or not 10 <= self.timeout_seconds <= 900:
+            raise UserError("Request timeout must be between 10 and 900 seconds.")
+        if self.reasoning_effort not in ("instant", "auto", "off", "low", "medium", "high", "xhigh", "max"):
+            raise UserError("Choose a supported reasoning effort.")
 
 
 def load_settings() -> Settings:
@@ -37,7 +41,14 @@ def load_settings() -> Settings:
     if not file.exists():
         return Settings()
     try:
-        settings = Settings(**json.loads(file.read_text(encoding="utf-8")))
+        data = json.loads(file.read_text(encoding="utf-8"))
+        # Upgrade the exact old defaults for the requested accuracy-first mode;
+        # preserve any custom model, budget, or timeout from older versions.
+        if data == {"model": "gpt-4.1-mini", "max_output_tokens": 600, "timeout_seconds": 60}:
+            return Settings()
+        if "reasoning_effort" not in data:
+            data["reasoning_effort"] = "instant" if data.get("model") == "gpt-6-astra" else "auto"
+        settings = Settings(**data)
         settings.validate()
         return settings
     except (OSError, ValueError, TypeError):
@@ -61,9 +72,26 @@ def save_settings(settings: Settings) -> None:
         ) from None
 
 
+def key_file() -> Path:
+    return settings_dir() / "api_key.txt"
+
+
 def saved_key() -> str | None:
-    import win32cred
-    import pywintypes
+    # A fallback file wins over an older credential that could not be updated.
+    try:
+        if key_file().exists():
+            return key_file().read_text(encoding="utf-8").strip() or None
+    except (OSError, UnicodeError):
+        raise UserError("Cannot read %LOCALAPPDATA%\\Screenshotter\\api_key.txt. Check file access.") from None
+    return _credential_key()
+
+
+def _credential_key() -> str | None:
+    try:
+        import win32cred
+        import pywintypes
+    except ImportError:
+        raise UserError("Windows credential support is missing. Run Setup.cmd again.") from None
 
     try:
         credential = win32cred.CredRead(CREDENTIAL_NAME, win32cred.CRED_TYPE_GENERIC)
@@ -85,16 +113,53 @@ def load_key() -> str:
     return key
 
 
-def save_key(key: str) -> None:
+def save_key(key: str) -> str:
+    """Return the storage used, falling back to text if credentials fail."""
+    key = key.strip()
+    if not key or any(c.isspace() for c in key):
+        raise UserError("Enter an API key without whitespace.")
+    if not key_file().exists():
+        try:
+            _save_credential_key(key)
+            return "credential"
+        except UserError:
+            pass  # The user explicitly authorized a text file if this fails.
+    _save_key_file(key)
+    return "text"
+
+
+def _save_key_file(key: str) -> None:
+    temporary = None
+    try:
+        directory = settings_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        descriptor, name = tempfile.mkstemp(prefix=".api-key-", dir=directory)
+        temporary = Path(name)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(key + "\n")
+        temporary.replace(key_file())
+    except OSError as exc:
+        code = getattr(exc, "winerror", None) or exc.errno
+        detail = f" (error {code})" if isinstance(code, int) else ""
+        raise UserError(
+            "Could not save the key in %LOCALAPPDATA%\\Screenshotter\\api_key.txt"
+            f"{detail}. Check your account's folder permissions."
+        ) from None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _save_credential_key(key: str) -> None:
     try:
         import win32cred
         import pywintypes
     except ImportError:
         raise UserError("Windows credential support is missing. Run Setup.cmd again.") from None
 
-    key = key.strip()
-    if not key or any(c.isspace() for c in key):
-        raise UserError("Enter an API key without whitespace.")
     try:
         win32cred.CredWrite({
             "Type": win32cred.CRED_TYPE_GENERIC,

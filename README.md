@@ -31,8 +31,10 @@ you configure a key and trigger a screenshot.
 3. Create an API key in your [OpenAI API account](https://platform.openai.com/api-keys)
    and enable billing if necessary. Double-click **Configure.cmd** and paste
    the key into its masked field. Never put the key in the repository or chat.
-   The key is saved for your Windows user in **Windows Credential Manager** under
-   `Screenshotter/OpenAI`.
+   The app first tries **Windows Credential Manager** under `Screenshotter/OpenAI`.
+   If that fails, it saves the key as plaintext in
+   `%LOCALAPPDATA%\Screenshotter\api_key.txt`, as authorized for this app.
+   The success message identifies text-file storage when used.
 4. Double-click **Start.cmd**. A small camera icon appears in the system tray
    (possibly under Windows' hidden-icons arrow). You can close the settings
    window and leave Chrome in front. Open the tray menu to see readiness or
@@ -73,24 +75,51 @@ the app is already running.
 
 ## Settings, audio, and costs
 
-The default model is `gpt-4.1-mini`, with a 600-output-token limit and a
-60-second network timeout. Configure.cmd allows a different vision-capable
-Responses API model and answer limit. Quit and restart the app after saving
-changes. For advanced settings, `%LOCALAPPDATA%\Screenshotter\settings.json`
-contains the non-secret model, token limit, and timeout (10–180 seconds).
-The optional `OPENAI_API_KEY` environment variable overrides a stored key.
+The default model is **`gpt-6-astra`**, selected to prioritize answer quality,
+with **Instant** reasoning (`reasoning.effort: "none"` in the API request),
+a **16,384-token total output budget**, and a **300-second network timeout**.
+The original concise-answer prompt stays unchanged. The token budget includes
+internal reasoning, when enabled, as well as the spoken answer; it does not
+instruct the model to produce a long answer. It is a maximum, not a guaranteed
+allocation or charge. Instant requests no additional reasoning but does not
+guarantee zero latency. The chosen model must support `none` reasoning; this
+model-specific setting could not be validated with a live API key here.
+
+The model ID is listed in [OpenAI's official SDK model
+definitions](https://github.com/openai/openai-python/blob/main/src/openai/types/shared/chat_model.py).
+Your API project must have access to it. This app cannot guarantee which models
+your key can use, and the SDK listing alone does not establish comparative
+benchmark results. The app reports denied model access instead of silently
+switching to another model.
+
+Configure.cmd exposes the model, reasoning effort, token budget (128–32,768),
+and timeout (10–900 seconds). Explicit effort levels must be supported by the
+selected model; `off` omits the reasoning parameter and uses model defaults
+(it does not necessarily disable reasoning). `auto` uses high effort for
+GPT-5/6 and o-series reasoning models and omits it for non-reasoning models
+such as `gpt-4.1-mini`. Instant also omits it for GPT-4 and GPT-3.5 models,
+which do not support reasoning-effort controls.
+Quit and restart the app after saving changes. Non-secret settings are in
+`%LOCALAPPDATA%\Screenshotter\settings.json`. The exact legacy defaults
+(`gpt-4.1-mini`, 600 tokens, 60 seconds) migrate to the new defaults in 0.1.3;
+customized settings are preserved. The optional `OPENAI_API_KEY` environment
+variable overrides saved keys, followed by the text file, then Credential Manager.
 
 Speech uses an installed Windows SAPI voice and Windows' default audio device.
 Check Windows sound settings if muted or routed to headphones. It uses no paid
 audio service. Volume follows normal Windows application/system sound controls.
 
-Charges depend on the chosen model, image size, and answer length. Each trigger
+Charges depend on the chosen model, image size, reasoning, and answer length.
+The previous mini-model cost estimate does **not** apply to the new default.
+Higher reasoning can cost substantially more and take longer, even when the
+spoken answer is short. Current pricing could not be checked from the cloud
+development environment; verify it for your chosen model before use. Each trigger
 sends one image, with no previous conversation. Drag-selecting just the question
 reduces unrelated content and often improves legibility. Check [current API
 pricing](https://openai.com/api/pricing/) and [prepaid billing
 terms](https://help.openai.com/en/articles/8264644-how-can-i-set-up-prepaid-billing)
-before adding funds. Set billing controls in your OpenAI project. The answer
-token limit bounds answer length; it is not a dollar spending cap.
+before adding funds. Set billing controls in your OpenAI project. The output
+token limit includes reasoning; it is not a dollar spending cap.
 
 ## Data and troubleshooting
 
@@ -99,10 +128,13 @@ token limit bounds answer length; it is not a dollar spending cap.
   to disk by this app. The complete screenshot is transmitted when using `5`.
   The API request sets `store: false`, which does not override OpenAI's other
   applicable retention policies.
-- Credentials are not included in settings files or logs. Credential Manager
-  protects a saved key for your Windows user; other software running as that
-  user may still access it. To remove it, use Windows Credential Manager →
-  Windows Credentials → Generic Credentials → `Screenshotter/OpenAI`.
+- The API key is never included in `settings.json` or logs. Credential Manager
+  is tried first; if it fails, the key is stored in the separate plaintext file
+  `%LOCALAPPDATA%\Screenshotter\api_key.txt`. If the file already exists, saves
+  update it and reads prefer it over an older credential. You can also create
+  this UTF-8 file manually with just the API key to use text-file storage directly.
+  To remove saved keys, delete that file and remove `Screenshotter/OpenAI` from
+  Windows Credential Manager → Windows Credentials → Generic Credentials.
 - Tray status shows actionable errors for rejected keys, quota limits, missing
   model access, and connection failures. Logs in
   `%LOCALAPPDATA%\Screenshotter\app.log` contain timestamps and exception types,

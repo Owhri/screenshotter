@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 
 from screenshotter.errors import UserError
+from screenshotter.settings import Settings
 
 ENDPOINT = "https://api.openai.com/v1/responses"
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
@@ -16,14 +17,17 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
 class OpenAIChat:
-    def __init__(self, api_key: str, model: str = "gpt-4.1-mini", max_output_tokens: int = 600,
-                 timeout: float = 60) -> None:
+    def __init__(self, api_key: str, model: str = Settings.model,
+                 max_output_tokens: int = Settings.max_output_tokens,
+                 timeout: float = Settings.timeout_seconds,
+                 reasoning_effort: str = Settings.reasoning_effort) -> None:
         self._key = api_key.strip()
         if not self._key or any(c.isspace() for c in self._key):
             raise UserError("Set a valid API key with Configure.cmd.")
         self.model = model
         self.max_output_tokens = max_output_tokens
         self.timeout = timeout
+        self.reasoning_effort = reasoning_effort
         self._closed = threading.Event()
         # Never follow a redirect carrying an Authorization header to another host.
         self._opener = urllib.request.build_opener(NoRedirect())
@@ -48,6 +52,13 @@ class OpenAIChat:
                 {"type": "input_image", "image_url": f"data:image/png;base64,{encoded}", "detail": "high"},
             ]}],
         }
+        effort = self.reasoning_effort
+        if effort == "instant":
+            effort = "off" if self.model.startswith(("gpt-4", "gpt-3.5")) else "none"
+        elif effort == "auto":
+            effort = "high" if self.model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")) else "off"
+        if effort != "off":
+            payload["reasoning"] = {"effort": effort}
         request = urllib.request.Request(
             ENDPOINT, data=json.dumps(payload).encode("utf-8"), method="POST",
             headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},
@@ -58,7 +69,7 @@ class OpenAIChat:
         except urllib.error.HTTPError as exc:
             # Do not display or log response bodies: they may echo input.
             messages = {
-                400: "API rejected the request. Check your model setting and try a smaller selection.",
+                400: "API rejected the request. Check model, reasoning effort, and image size in settings.",
                 401: "API key was rejected. Update it with Configure.cmd.",
                 403: "API access was denied. Check your project's model access.",
                 404: "API model was not found. Check the model in Configure.cmd.",
@@ -88,7 +99,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def extract_answer(result: dict) -> str:
     if result.get("status") != "completed":
         if result.get("incomplete_details", {}).get("reason") == "max_output_tokens":
-            raise UserError("Answer exceeded the length limit. Ask fewer questions in one selection.")
+            raise UserError("Answer or reasoning exceeded the length limit. Increase the token budget or select fewer questions.")
         raise UserError("API did not complete the answer. Try again later.")
     texts = []
     for item in result.get("output", []):
